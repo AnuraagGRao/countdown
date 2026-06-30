@@ -1,147 +1,139 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Episode Countdown – TV Shows &amp; Anime</title>
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet" />
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Episode Countdown – TV Shows &amp; Anime</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <!-- ── NAV ── -->
+    <header class="nav">
+      <div class="nav__inner">
+        <a href="#" class="nav__logo">
+          <span class="logo-icon">⏱</span>
+          <span class="logo-text">EpiCountdown</span>
+        </a>
+        <nav class="nav__links">
+          <a href="#tv-section" class="nav__link">TV Shows</a>
+          <a href="#anime-section" class="nav__link">Anime</a>
+        </nav>
+      </div>
+    </header>
 
-  <!-- ── NAV ── -->
-  <header class="nav">
-    <div class="nav__inner">
-      <a href="#" class="nav__logo">
-        <span class="logo-icon">⏱</span>
-        <span class="logo-text">EpiCountdown</span>
-      </a>
-      <nav class="nav__links">
-        <a href="#tv-section" class="nav__link">TV Shows</a>
-        <a href="#anime-section" class="nav__link">Anime</a>
-      </nav>
-    </div>
-  </header>
+    <!-- ── HERO ── -->
+    <section class="hero">
+      <div class="hero__bg-overlay"></div>
+      <div class="hero__content">
+        <h1 class="hero__title">Never Miss an Episode Again</h1>
+        <p class="hero__subtitle">Live countdowns for your favourite TV shows &amp; anime — updated every second.</p>
 
-  <!-- ── HERO ── -->
-  <section class="hero">
-    <div class="hero__bg-overlay"></div>
-    <div class="hero__content">
-      <h1 class="hero__title">
-        Never Miss an Episode Again
-      </h1>
-      <p class="hero__subtitle">
-        Live countdowns for your favourite TV shows &amp; anime — updated every second.
+        <form class="search-form" id="search-form" autocomplete="off">
+          <div class="search-wrapper">
+            <span class="search-icon">🔍</span>
+            <input
+              type="search"
+              id="search-input"
+              class="search-input"
+              placeholder="Search shows or anime…"
+              aria-label="Search shows or anime"
+            />
+            <button type="submit" class="search-btn">Search</button>
+          </div>
+        </form>
+
+        <!-- Search results overlay -->
+        <div id="search-results" class="search-results" hidden></div>
+      </div>
+    </section>
+
+    <!-- ── MAIN CONTENT ── -->
+    <main class="main-content">
+      <!-- TV Shows Section -->
+      <section id="tv-section" class="content-section">
+        <div class="section-header">
+          <h2 class="section-title"><span class="section-accent">📺</span> Trending TV Shows</h2>
+          <span class="section-badge" id="tv-count"></span>
+        </div>
+        <div id="tv-grid" class="cards-grid">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading TV shows…</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Anime Section -->
+      <section id="anime-section" class="content-section">
+        <div class="section-header">
+          <h2 class="section-title"><span class="section-accent">🎌</span> Currently Airing Anime</h2>
+          <span class="section-badge" id="anime-count"></span>
+        </div>
+        <div id="anime-grid" class="cards-grid">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Loading anime…</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── FOOTER ── -->
+    <footer class="footer">
+      <p>
+        Data sourced from
+        <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>
+        &amp;
+        <a href="https://jikan.moe" target="_blank" rel="noopener">Jikan (MyAnimeList)</a>. Built with ❤️ using Vanilla
+        JS.
       </p>
+    </footer>
 
-      <form class="search-form" id="search-form" autocomplete="off">
-        <div class="search-wrapper">
-          <span class="search-icon">🔍</span>
-          <input
-            type="search"
-            id="search-input"
-            class="search-input"
-            placeholder="Search shows or anime…"
-            aria-label="Search shows or anime"
-          />
-          <button type="submit" class="search-btn">Search</button>
+    <!-- Card template (cloned by JS) -->
+    <template id="card-template">
+      <article class="card">
+        <div class="card__image-wrap">
+          <img class="card__image" src="" alt="" loading="lazy" />
+          <div class="card__status-badge"></div>
         </div>
-      </form>
-
-      <!-- Search results overlay -->
-      <div id="search-results" class="search-results" hidden></div>
-    </div>
-  </section>
-
-  <!-- ── MAIN CONTENT ── -->
-  <main class="main-content">
-
-    <!-- TV Shows Section -->
-    <section id="tv-section" class="content-section">
-      <div class="section-header">
-        <h2 class="section-title">
-          <span class="section-accent">📺</span> Trending TV Shows
-        </h2>
-        <span class="section-badge" id="tv-count"></span>
-      </div>
-      <div id="tv-grid" class="cards-grid">
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <p>Loading TV shows…</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Anime Section -->
-    <section id="anime-section" class="content-section">
-      <div class="section-header">
-        <h2 class="section-title">
-          <span class="section-accent">🎌</span> Currently Airing Anime
-        </h2>
-        <span class="section-badge" id="anime-count"></span>
-      </div>
-      <div id="anime-grid" class="cards-grid">
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <p>Loading anime…</p>
-        </div>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- ── FOOTER ── -->
-  <footer class="footer">
-    <p>
-      Data sourced from
-      <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>
-      &amp;
-      <a href="https://jikan.moe" target="_blank" rel="noopener">Jikan (MyAnimeList)</a>.
-      Built with ❤️ using Vanilla JS.
-    </p>
-  </footer>
-
-  <!-- Card template (cloned by JS) -->
-  <template id="card-template">
-    <article class="card">
-      <div class="card__image-wrap">
-        <img class="card__image" src="" alt="" loading="lazy" />
-        <div class="card__status-badge"></div>
-      </div>
-      <div class="card__body">
-        <h3 class="card__title"></h3>
-        <p class="card__episode"></p>
-        <div class="card__countdown" aria-live="polite">
-          <div class="countdown-unit">
-            <span class="countdown-value" data-days></span>
-            <span class="countdown-label">Days</span>
+        <div class="card__body">
+          <h3 class="card__title"></h3>
+          <p class="card__episode"></p>
+          <div class="card__countdown" aria-live="polite">
+            <div class="countdown-unit">
+              <span class="countdown-value" data-days></span>
+              <span class="countdown-label">Days</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+              <span class="countdown-value" data-hours></span>
+              <span class="countdown-label">Hrs</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+              <span class="countdown-value" data-minutes></span>
+              <span class="countdown-label">Min</span>
+            </div>
+            <div class="countdown-sep">:</div>
+            <div class="countdown-unit">
+              <span class="countdown-value" data-seconds></span>
+              <span class="countdown-label">Sec</span>
+            </div>
           </div>
-          <div class="countdown-sep">:</div>
-          <div class="countdown-unit">
-            <span class="countdown-value" data-hours></span>
-            <span class="countdown-label">Hrs</span>
-          </div>
-          <div class="countdown-sep">:</div>
-          <div class="countdown-unit">
-            <span class="countdown-value" data-minutes></span>
-            <span class="countdown-label">Min</span>
-          </div>
-          <div class="countdown-sep">:</div>
-          <div class="countdown-unit">
-            <span class="countdown-value" data-seconds></span>
-            <span class="countdown-label">Sec</span>
+          <div class="card__meta">
+            <span class="card__rating"></span>
+            <span class="card__genres"></span>
           </div>
         </div>
-        <div class="card__meta">
-          <span class="card__rating"></span>
-          <span class="card__genres"></span>
-        </div>
-      </div>
-    </article>
-  </template>
+      </article>
+    </template>
 
-  <script src="app.js"></script>
-</body>
+    <script src="app.js"></script>
+  </body>
 </html>

@@ -13,12 +13,13 @@
 // Constants
 // ─────────────────────────────────────────
 const TVMAZE_SCHEDULE = 'https://api.tvmaze.com/schedule?country=US&date=';
-const TVMAZE_SEARCH   = 'https://api.tvmaze.com/search/shows?q=';
-const TVMAZE_SHOW     = 'https://api.tvmaze.com/shows/';         // + id + ?embed=nextepisode
-const JIKAN_SEASONS   = 'https://api.jikan.moe/v4/seasons/now?limit=24';
-const JIKAN_SEARCH    = 'https://api.jikan.moe/v4/anime?q=';
+const TVMAZE_SEARCH = 'https://api.tvmaze.com/search/shows?q=';
+const TVMAZE_SHOW = 'https://api.tvmaze.com/shows/'; // + id + ?embed=nextepisode
+const JIKAN_SEASONS = 'https://api.jikan.moe/v4/seasons/now?limit=24';
+const JIKAN_SEARCH = 'https://api.jikan.moe/v4/anime?q=';
 
-const PLACEHOLDER_IMG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='400' viewBox='0 0 300 400'%3E%3Crect width='300' height='400' fill='%230a0a12'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='64' fill='%23333'%3E📺%3C/text%3E%3C/svg%3E";
+const PLACEHOLDER_IMG =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='400' viewBox='0 0 300 400'%3E%3Crect width='300' height='400' fill='%230a0a12'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='64' fill='%23333'%3E📺%3C/text%3E%3C/svg%3E";
 
 // ─────────────────────────────────────────
 // State
@@ -56,7 +57,7 @@ function parseAirTime(dateStr, timeStr) {
  * @param {string} str
  * @returns {string}
  */
-const safe = str => (str == null ? '' : String(str).trim());
+const safe = str => (str === null || str === undefined ? '' : String(str).trim());
 
 // ─────────────────────────────────────────
 // Countdown engine
@@ -71,7 +72,7 @@ function renderCountdown(cardEl, airTimestamp) {
   const countdownEl = cardEl.querySelector('.card__countdown');
   if (!countdownEl) return;
 
-  const now  = Date.now();
+  const now = Date.now();
   const diff = airTimestamp - now;
 
   if (isNaN(airTimestamp)) {
@@ -84,10 +85,10 @@ function renderCountdown(cardEl, airTimestamp) {
     return;
   }
 
-  const days    = Math.floor(diff / 86_400_000);
-  const hours   = Math.floor((diff % 86_400_000) / 3_600_000);
-  const minutes = Math.floor((diff % 3_600_000)  / 60_000);
-  const seconds = Math.floor((diff % 60_000)      / 1_000);
+  const days = Math.floor(diff / 86_400_000);
+  const hours = Math.floor((diff % 86_400_000) / 3_600_000);
+  const minutes = Math.floor((diff % 3_600_000) / 60_000);
+  const seconds = Math.floor((diff % 60_000) / 1_000);
 
   // Restore full countdown markup if it was previously replaced by a static label
   if (!countdownEl.querySelector('[data-seconds]')) {
@@ -95,8 +96,8 @@ function renderCountdown(cardEl, airTimestamp) {
     countdownEl.className = 'card__countdown';
   }
 
-  countdownEl.querySelector('[data-days]').textContent    = pad(days);
-  countdownEl.querySelector('[data-hours]').textContent   = pad(hours);
+  countdownEl.querySelector('[data-days]').textContent = pad(days);
+  countdownEl.querySelector('[data-hours]').textContent = pad(hours);
   countdownEl.querySelector('[data-minutes]').textContent = pad(minutes);
 
   const secEl = countdownEl.querySelector('[data-seconds]');
@@ -167,6 +168,7 @@ function startCountdownEngine() {
  *   genres: string[],
  *   nextEpisodeLabel: string,
  *   airTimestamp: number,
+ *   url: string,
  * }} show
  * @returns {HTMLElement}
  */
@@ -174,12 +176,22 @@ function buildCard(show) {
   const template = document.getElementById('card-template');
   const card = template.content.cloneNode(true).querySelector('.card');
 
+  // Make card clickable
+  if (show.url) {
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', () => {
+      window.open(show.url, '_blank', 'noopener,noreferrer');
+    });
+  }
+
   // Image
   const imgEl = card.querySelector('.card__image');
   imgEl.alt = safe(show.title);
   if (show.image) {
     imgEl.src = show.image;
-    imgEl.onerror = () => { imgEl.src = PLACEHOLDER_IMG; };
+    imgEl.onerror = () => {
+      imgEl.src = PLACEHOLDER_IMG;
+    };
   } else {
     imgEl.src = PLACEHOLDER_IMG;
   }
@@ -206,7 +218,7 @@ function buildCard(show) {
 
   // Rating
   const ratingEl = card.querySelector('.card__rating');
-  if (show.rating != null && show.rating > 0) {
+  if (show.rating !== null && show.rating !== undefined && show.rating > 0) {
     ratingEl.textContent = `⭐ ${show.rating.toFixed(1)}`;
   } else {
     ratingEl.textContent = '';
@@ -280,7 +292,7 @@ function renderCards(grid, cards, badgeEl) {
  */
 async function fetchTVShows() {
   const today = new Date().toISOString().slice(0, 10);
-  const resp  = await fetch(`${TVMAZE_SCHEDULE}${today}`);
+  const resp = await fetch(`${TVMAZE_SCHEDULE}${today}`);
   if (!resp.ok) throw new Error(`TVmaze schedule: ${resp.status}`);
 
   const episodes = await resp.json();
@@ -298,31 +310,35 @@ async function fetchTVShows() {
 
   const enriched = await Promise.allSettled(
     topShows.map(show =>
-      fetch(`${TVMAZE_SHOW}${show.id}?embed=nextepisode`)
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      fetch(`${TVMAZE_SHOW}${show.id}?embed=nextepisode`).then(r =>
+        r.ok ? r.json() : Promise.reject(r.status)
+      )
     )
   );
 
   return enriched
     .map((result, i) => {
-      const raw  = result.status === 'fulfilled' ? result.value : topShows[i];
+      const raw = result.status === 'fulfilled' ? result.value : topShows[i];
       const next = raw?._embedded?.nextepisode;
       const show = raw || topShows[i];
 
       const airDate = next?.airdate || null;
       const airTime = next?.airtime || null;
-      const ts      = parseAirTime(airDate, airTime);
+      const ts = parseAirTime(airDate, airTime);
 
       return {
-        title:            safe(show.name),
-        image:            show.image?.medium || show.image?.original || null,
-        status:           show.status || 'Unknown',
-        rating:           show.rating?.average || null,
-        genres:           show.genres || [],
+        title: safe(show.name),
+        image: show.image?.medium || show.image?.original || null,
+        status: show.status || 'Unknown',
+        rating: show.rating?.average || null,
+        genres: show.genres || [],
         nextEpisodeLabel: next
-          ? `Episode ${next.number ?? '?'}${next.season ? ` · S${String(next.season).padStart(2,'0')}` : ''}`
-          : (show.status === 'Ended' ? 'Series Ended' : 'Next Episode TBA'),
+          ? `Episode ${next.number ?? '?'}${next.season ? ` · S${String(next.season).padStart(2, '0')}` : ''}`
+          : show.status === 'Ended'
+            ? 'Series Ended'
+            : 'Next Episode TBA',
         airTimestamp: ts,
+        url: show.url || `https://www.tvmaze.com/shows/${show.id}`,
       };
     })
     .filter(s => s.title);
@@ -343,24 +359,27 @@ async function fetchAnime() {
   const json = await resp.json();
 
   return (json.data || [])
-    .filter(a => a.type !== 'Music' && a.type !== 'ONA')  // skip music/specials
+    .filter(a => a.type !== 'Music' && a.type !== 'ONA') // skip music/specials
     .slice(0, 24)
     .map(anime => {
-      const broadcast = anime.broadcast;   // { day, time, timezone, string }
+      const broadcast = anime.broadcast; // { day, time, timezone, string }
       const ts = nextBroadcastTimestamp(broadcast);
 
       const score = anime.score ? Number(anime.score) : null;
 
       return {
-        title:            safe(anime.title_english || anime.title),
-        image:            anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
-        status:           anime.airing ? 'Airing' : (anime.status || 'TBA'),
-        rating:           score,
-        genres:           (anime.genres || []).map(g => g.name),
+        title: safe(anime.title_english || anime.title),
+        image: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
+        status: anime.airing ? 'Airing' : anime.status || 'TBA',
+        rating: score,
+        genres: (anime.genres || []).map(g => g.name),
         nextEpisodeLabel: anime.airing
-          ? (anime.episodes ? `Episode ? / ${anime.episodes}` : 'Currently Airing')
+          ? anime.episodes
+            ? `Episode ? / ${anime.episodes}`
+            : 'Currently Airing'
           : 'TBA',
         airTimestamp: ts,
+        url: anime.url || `https://myanimelist.net/anime/${anime.mal_id}`,
       };
     })
     .filter(s => s.title);
@@ -376,7 +395,15 @@ async function fetchAnime() {
 function nextBroadcastTimestamp(broadcast) {
   if (!broadcast || !broadcast.day || !broadcast.time) return NaN;
 
-  const days = ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'];
+  const days = [
+    'Sundays',
+    'Mondays',
+    'Tuesdays',
+    'Wednesdays',
+    'Thursdays',
+    'Fridays',
+    'Saturdays',
+  ];
   const dayIndex = days.indexOf(broadcast.day);
   if (dayIndex === -1) return NaN;
 
@@ -386,24 +413,31 @@ function nextBroadcastTimestamp(broadcast) {
   const mJST = parseInt(mStr, 10);
   if (isNaN(hJST) || isNaN(mJST)) return NaN;
 
-  // Convert JST → UTC
-  const hUTC = hJST - 9;
+  // Convert JST → UTC (handle negative hours)
+  let hUTC = hJST - 9;
+  let dayOffset = 0;
+
+  if (hUTC < 0) {
+    hUTC += 24;
+    dayOffset = -1;
+  } else if (hUTC >= 24) {
+    hUTC -= 24;
+    dayOffset = 1;
+  }
 
   const now = new Date();
-  // Build a UTC date for the most-recent occurrence of that day+time
-  const candidate = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-    hUTC,
-    mJST,
-    0,
-    0
-  ));
+  // Build a UTC date for the target day+time
+  const candidate = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hUTC, mJST, 0, 0)
+  );
 
-  // Adjust to the correct weekday (add days until we land on dayIndex)
+  // Adjust to the correct weekday
   const todayUTCDay = candidate.getUTCDay();
-  let diff = dayIndex - todayUTCDay;
+  let diff = dayIndex - todayUTCDay + dayOffset;
+
+  // Normalize diff to 0-6 range
+  if (diff < 0) diff += 7;
+
   candidate.setUTCDate(candidate.getUTCDate() + diff);
 
   // If the computed time is in the past, move forward one week
@@ -444,23 +478,33 @@ async function performSearch(query) {
       fetch(`${JIKAN_SEARCH}${encodeURIComponent(query)}&limit=5`).then(r => r.json()),
     ]);
 
-    const tvItems = tvResp.status === 'fulfilled'
-      ? (tvResp.value || []).slice(0, 5).map(r => ({
-          title:  r.show?.name,
-          image:  r.show?.image?.medium || null,
-          meta:   `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Unknown network'}`,
-          status: r.show?.status,
-        })).filter(i => i.title)
-      : [];
+    const tvItems =
+      tvResp.status === 'fulfilled'
+        ? (tvResp.value || [])
+            .slice(0, 5)
+            .map(r => ({
+              title: r.show?.name,
+              image: r.show?.image?.medium || null,
+              meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Unknown network'}`,
+              status: r.show?.status,
+              url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
+            }))
+            .filter(i => i.title)
+        : [];
 
-    const animeItems = animeResp.status === 'fulfilled'
-      ? (animeResp.value?.data || []).slice(0, 5).map(a => ({
-          title:  a.title_english || a.title,
-          image:  a.images?.jpg?.image_url || null,
-          meta:   `Anime · ${a.type || 'TV'} · ${a.status || ''}`,
-          status: a.status,
-        })).filter(i => i.title)
-      : [];
+    const animeItems =
+      animeResp.status === 'fulfilled'
+        ? (animeResp.value?.data || [])
+            .slice(0, 5)
+            .map(a => ({
+              title: a.title_english || a.title,
+              image: a.images?.jpg?.image_url || null,
+              meta: `Anime · ${a.type || 'TV'} · ${a.status || ''}`,
+              status: a.status,
+              url: a.url || `https://myanimelist.net/anime/${a.mal_id}`,
+            }))
+            .filter(i => i.title)
+        : [];
 
     const combined = [...tvItems, ...animeItems];
 
@@ -481,11 +525,31 @@ async function performSearch(query) {
       row.className = 'search-result-item';
       row.setAttribute('role', 'button');
       row.setAttribute('tabindex', '0');
+      row.style.cursor = 'pointer';
+
+      // Add click handler to open show page
+      if (item.url) {
+        row.addEventListener('click', () => {
+          const resultsEl = document.getElementById('search-results');
+          window.open(item.url, '_blank', 'noopener,noreferrer');
+          resultsEl.hidden = true;
+        });
+        row.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            const resultsEl = document.getElementById('search-results');
+            window.open(item.url, '_blank', 'noopener,noreferrer');
+            resultsEl.hidden = true;
+          }
+        });
+      }
 
       const img = document.createElement('img');
-      img.src  = item.image || PLACEHOLDER_IMG;
-      img.alt  = safe(item.title);
-      img.onerror = () => { img.src = PLACEHOLDER_IMG; };
+      img.src = item.image || PLACEHOLDER_IMG;
+      img.alt = safe(item.title);
+      img.onerror = () => {
+        img.src = PLACEHOLDER_IMG;
+      };
 
       const info = document.createElement('div');
       info.className = 'search-result-item__info';
@@ -508,7 +572,7 @@ async function performSearch(query) {
     resultsEl.innerHTML = '';
     resultsEl.appendChild(list);
   } catch (err) {
-    resultsEl.innerHTML = `<div class="search-no-results">Search failed. Please try again.</div>`;
+    resultsEl.innerHTML = '<div class="search-no-results">Search failed. Please try again.</div>';
     console.error('Search error:', err);
   }
 }
@@ -518,19 +582,16 @@ async function performSearch(query) {
 // ─────────────────────────────────────────
 
 async function init() {
-  const tvGrid     = document.getElementById('tv-grid');
-  const animeGrid  = document.getElementById('anime-grid');
-  const tvCount    = document.getElementById('tv-count');
+  const tvGrid = document.getElementById('tv-grid');
+  const animeGrid = document.getElementById('anime-grid');
+  const tvCount = document.getElementById('tv-count');
   const animeCount = document.getElementById('anime-count');
 
   // Start countdown ticker
   startCountdownEngine();
 
   // Fetch TV shows and anime in parallel
-  const [tvResult, animeResult] = await Promise.allSettled([
-    fetchTVShows(),
-    fetchAnime(),
-  ]);
+  const [tvResult, animeResult] = await Promise.allSettled([fetchTVShows(), fetchAnime()]);
 
   // Render TV shows
   if (tvResult.status === 'fulfilled') {
@@ -559,7 +620,7 @@ async function init() {
 
 document.addEventListener('DOMContentLoaded', () => {
   // ── Search form ──
-  const searchForm  = document.getElementById('search-form');
+  const searchForm = document.getElementById('search-form');
   const searchInput = document.getElementById('search-input');
   const searchResults = document.getElementById('search-results');
 

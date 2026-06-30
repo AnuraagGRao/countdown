@@ -1,0 +1,29 @@
+{
+  "env": {
+    "browser": true,
+    "es2021": true
+  },
+  "extends": "eslint:recommended",
+  "parserOptions": {
+    "ecmaVersion": 2021,
+    "sourceType": "script"
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console": "off",
+    "prefer-const": "warn",
+    "no-var": "error",
+    "eqeqeq": ["error", "always"],
+    "curly": ["error", "multi-line"],
+    "brace-style": ["error", "1tbs", { "allowSingleLine": true }],
+    "indent": ["error", 2, { "SwitchCase": 1 }],
+    "quotes": ["error", "single", { "avoidEscape": true }],
+    "semi": ["error", "always"],
+    "no-trailing-spaces": "error",
+    "comma-dangle": ["error", "only-multiline"],
+    "arrow-spacing": "error",
+    "space-before-blocks": "error",
+    "keyword-spacing": "error"
+  },
+  "globals": {}
+}
