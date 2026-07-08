@@ -10,7 +10,7 @@
 'use strict';
 
 // ─────────────────────────────────────────
-// Constants
+// Constants (imported from config)
 // ─────────────────────────────────────────
 const TVMAZE_SCHEDULE = 'https://api.tvmaze.com/schedule?country=US&date=';
 const TVMAZE_SEARCH = 'https://api.tvmaze.com/search/shows?q=';
@@ -21,11 +21,16 @@ const JIKAN_SEARCH = 'https://api.jikan.moe/v4/anime?q=';
 const PLACEHOLDER_IMG =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='400' viewBox='0 0 300 400'%3E%3Crect width='300' height='400' fill='%230a0a12'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='64' fill='%23333'%3E📺%3C/text%3E%3C/svg%3E";
 
+const SHOWS_PER_SOURCE = 24;
+const SEARCH_DEBOUNCE_MS = 400;
+const COUNTDOWN_INTERVAL_MS = 1000;
+
 // ─────────────────────────────────────────
 // State
 // ─────────────────────────────────────────
 /** @type {Array<{airTimestamp: number, cardEl: HTMLElement}>} */
 const activeCountdowns = [];
+let countdownIntervalId = null;
 
 // ─────────────────────────────────────────
 // Utility helpers
@@ -145,11 +150,30 @@ function countdownTemplate() {
 
 /** Tick all active countdowns once per second. */
 function startCountdownEngine() {
-  setInterval(() => {
+  if (countdownIntervalId !== null) return; // Already running
+
+  countdownIntervalId = setInterval(() => {
+    // Clean up any countdowns for cards no longer in the DOM
+    for (let i = activeCountdowns.length - 1; i >= 0; i--) {
+      if (!document.contains(activeCountdowns[i].cardEl)) {
+        activeCountdowns.splice(i, 1);
+      }
+    }
+    
+    // Update remaining countdowns
     for (const { airTimestamp, cardEl } of activeCountdowns) {
       renderCountdown(cardEl, airTimestamp);
     }
-  }, 1_000);
+  }, COUNTDOWN_INTERVAL_MS);
+}
+
+/** Stop the countdown engine and cleanup. */
+function stopCountdownEngine() {
+  if (countdownIntervalId !== null) {
+    clearInterval(countdownIntervalId);
+    countdownIntervalId = null;
+  }
+  activeCountdowns.length = 0;
 }
 
 // ─────────────────────────────────────────
