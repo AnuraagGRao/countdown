@@ -159,7 +159,7 @@ function startCountdownEngine() {
         activeCountdowns.splice(i, 1);
       }
     }
-    
+
     // Update remaining countdowns
     for (const { airTimestamp, cardEl } of activeCountdowns) {
       renderCountdown(cardEl, airTimestamp);
@@ -505,29 +505,29 @@ async function performSearch(query) {
     const tvItems =
       tvResp.status === 'fulfilled'
         ? (tvResp.value || [])
-            .slice(0, 5)
-            .map(r => ({
-              title: r.show?.name,
-              image: r.show?.image?.medium || null,
-              meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Unknown network'}`,
-              status: r.show?.status,
-              url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
-            }))
-            .filter(i => i.title)
+          .slice(0, 5)
+          .map(r => ({
+            title: r.show?.name,
+            image: r.show?.image?.medium || null,
+            meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Unknown network'}`,
+            status: r.show?.status,
+            url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
+          }))
+          .filter(i => i.title)
         : [];
 
     const animeItems =
       animeResp.status === 'fulfilled'
         ? (animeResp.value?.data || [])
-            .slice(0, 5)
-            .map(a => ({
-              title: a.title_english || a.title,
-              image: a.images?.jpg?.image_url || null,
-              meta: `Anime · ${a.type || 'TV'} · ${a.status || ''}`,
-              status: a.status,
-              url: a.url || `https://myanimelist.net/anime/${a.mal_id}`,
-            }))
-            .filter(i => i.title)
+          .slice(0, 5)
+          .map(a => ({
+            title: a.title_english || a.title,
+            image: a.images?.jpg?.image_url || null,
+            meta: `Anime · ${a.type || 'TV'} · ${a.status || ''}`,
+            status: a.status,
+            url: a.url || `https://myanimelist.net/anime/${a.mal_id}`,
+          }))
+          .filter(i => i.title)
         : [];
 
     const combined = [...tvItems, ...animeItems];
