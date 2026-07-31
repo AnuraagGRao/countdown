@@ -101,6 +101,10 @@ function renderCountdown(cardEl, airTimestamp) {
     countdownEl.className = 'card__countdown';
   }
 
+  // Add urgent class if less than 1 hour remaining
+  const isUrgent = diff < 3_600_000; // Less than 1 hour
+  countdownEl.classList.toggle('card__countdown--urgent', isUrgent);
+
   countdownEl.querySelector('[data-days]').textContent = pad(days);
   countdownEl.querySelector('[data-hours]').textContent = pad(hours);
   countdownEl.querySelector('[data-minutes]').textContent = pad(minutes);
@@ -296,6 +300,32 @@ function renderCards(grid, cards, badgeEl) {
   for (const c of cards) fragment.appendChild(c);
   grid.appendChild(fragment);
   if (badgeEl) badgeEl.textContent = `${cards.length} shows`;
+}
+
+/**
+ * Show skeleton loaders while content is loading.
+ * @param {HTMLElement} grid
+ * @param {number} count - Number of skeleton cards to show
+ */
+function showSkeletons(grid, count = 6) {
+  const skeletons = Array.from({ length: count }, () => {
+    const skeleton = document.createElement('div');
+    skeleton.className = 'skeleton-card';
+    skeleton.innerHTML = `
+      <div class="skeleton-image"></div>
+      <div class="skeleton-content">
+        <div class="skeleton-line" style="width: 80%;"></div>
+        <div class="skeleton-line" style="width: 60%;"></div>
+        <div class="skeleton-line" style="width: 70%;"></div>
+      </div>
+    `;
+    return skeleton;
+  });
+
+  grid.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  for (const s of skeletons) fragment.appendChild(s);
+  grid.appendChild(fragment);
 }
 
 // ─────────────────────────────────────────
@@ -614,6 +644,10 @@ async function init() {
   // Start countdown ticker
   startCountdownEngine();
 
+  // Show skeleton loaders
+  showSkeletons(tvGrid, 6);
+  showSkeletons(animeGrid, 6);
+
   // Fetch TV shows and anime in parallel
   const [tvResult, animeResult] = await Promise.allSettled([fetchTVShows(), fetchAnime()]);
 
@@ -621,20 +655,32 @@ async function init() {
   if (tvResult.status === 'fulfilled') {
     const cards = tvResult.value.map(buildCard);
     renderCards(tvGrid, cards, tvCount);
+    if (cards.length > 0 && window.toast) {
+      window.toast.success(`Loaded ${cards.length} TV shows!`, 2000);
+    }
   } else {
     console.error('TV fetch error:', tvResult.reason);
     showError(tvGrid, tvResult.reason?.message || String(tvResult.reason));
     tvCount.textContent = '0 shows';
+    if (window.toast) {
+      window.toast.error('Failed to load TV shows. Please refresh.', 4000);
+    }
   }
 
   // Render anime
   if (animeResult.status === 'fulfilled') {
     const cards = animeResult.value.map(buildCard);
     renderCards(animeGrid, cards, animeCount);
+    if (cards.length > 0 && window.toast) {
+      window.toast.success(`Loaded ${cards.length} anime!`, 2000);
+    }
   } else {
     console.error('Anime fetch error:', animeResult.reason);
     showError(animeGrid, animeResult.reason?.message || String(animeResult.reason));
     animeCount.textContent = '0 shows';
+    if (window.toast) {
+      window.toast.error('Failed to load anime. Please refresh.', 4000);
+    }
   }
 }
 
