@@ -1015,3 +1015,46 @@ kbd {
 .tick-flash {
   animation: tick-pulse 0.4s ease;
 }
+
+/* =============================================
+   FILTER CHIPS & FAVORITES
+   ============================================= */
+.filters-container {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 0.4rem 1rem;
+  color: #a0a0b0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.filter-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.filter-chip.active {
+  background: #7c3aed;
+  border-color: #8b5cf6;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(124, 58, 237, 0.4);
+}
+
+.card__favorite-btn.is-favorite {
+  color: #ef4444 !important;
+}
+
+.card__favorite-btn:hover {
+  transform: scale(1.15) !important;
+}
+

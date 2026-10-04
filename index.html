@@ -109,6 +109,12 @@
           <h2 class="section-title"><span class="section-accent">📺</span> Trending TV Shows</h2>
           <span class="section-badge" id="tv-count"></span>
         </div>
+        <div id="tv-filters" class="filters-container" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="filter-chip active" data-filter="all">All</button>
+            <button class="filter-chip" data-filter="today">Airing Today</button>
+            <button class="filter-chip" data-filter="week">This Week</button>
+            <button class="filter-chip" data-filter="favorites">Favorites</button>
+        </div>
         <div id="tv-grid" class="cards-grid">
           <div class="loading-state">
             <div class="spinner"></div>
@@ -122,6 +128,12 @@
         <div class="section-header">
           <h2 class="section-title"><span class="section-accent">🎌</span> Currently Airing Anime</h2>
           <span class="section-badge" id="anime-count"></span>
+        </div>
+        <div id="anime-filters" class="filters-container" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="filter-chip active" data-filter="all">All</button>
+            <button class="filter-chip" data-filter="today">Airing Today</button>
+            <button class="filter-chip" data-filter="week">This Week</button>
+            <button class="filter-chip" data-filter="favorites">Favorites</button>
         </div>
         <div id="anime-grid" class="cards-grid">
           <div class="loading-state">
@@ -180,7 +192,10 @@
           <div class="card__status-badge"></div>
         </div>
         <div class="card__body">
-          <h3 class="card__title"></h3>
+          <div style="display: flex; justify-content: space-between; align-items: start;">
+            <h3 class="card__title" style="margin: 0; padding-right: 10px;"></h3>
+            <button class="card__favorite-btn" aria-label="Toggle favorite" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #555; transition: color 0.2s, transform 0.2s;">♥</button>
+          </div>
           <p class="card__episode"></p>
           <div class="card__countdown" aria-live="polite">
             <div class="countdown-unit">

@@ -207,8 +207,41 @@ function buildCard(show) {
   // Make card clickable
   if (show.url) {
     card.style.cursor = 'pointer';
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (e) => {
+      // Don't trigger if favorite button was clicked
+      if (e.target.closest('.card__favorite-btn')) return;
       window.open(show.url, '_blank', 'noopener,noreferrer');
+    });
+  }
+
+  // Add data attributes for filtering
+  card.dataset.timestamp = show.airTimestamp;
+  card.dataset.title = safe(show.title);
+
+  // Favorites logic
+  const favBtn = card.querySelector('.card__favorite-btn');
+  if (favBtn) {
+    const favorites = JSON.parse(localStorage.getItem('countdown-favorites')) || [];
+    if (favorites.includes(safe(show.title))) {
+      favBtn.classList.add('is-favorite');
+    }
+    favBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      let favs = JSON.parse(localStorage.getItem('countdown-favorites')) || [];
+      const title = safe(show.title);
+      if (favs.includes(title)) {
+        favs = favs.filter(t => t !== title);
+        favBtn.classList.remove('is-favorite');
+        if (window.toast) window.toast.info('Removed from favorites');
+      } else {
+        favs.push(title);
+        favBtn.classList.add('is-favorite');
+        if (window.toast) window.toast.success('Added to favorites!');
+      }
+      localStorage.setItem('countdown-favorites', JSON.stringify(favs));
+      
+      // If we are currently filtering by favorites, we might want to re-filter,
+      // but hiding it immediately might be jarring.
     });
   }
 
@@ -725,3 +758,59 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── Boot ──
   init().catch(err => console.error('Init error:', err));
 });
+
+// ── Filters ──
+function setupFilters() {
+  const filterContainers = document.querySelectorAll(".filters-container");
+  
+  filterContainers.forEach(container => {
+    const isTV = container.id.includes("tv");
+    const gridId = isTV ? "tv-grid" : "anime-grid";
+    
+    container.addEventListener("click", e => {
+      const chip = e.target.closest(".filter-chip");
+      if (!chip) return;
+      
+      // Update active state
+      container.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      
+      const filterType = chip.dataset.filter;
+      const grid = document.getElementById(gridId);
+      const cards = grid.querySelectorAll(".card");
+      const now = Date.now();
+      const oneDay = 86400000;
+      const oneWeek = oneDay * 7;
+      let count = 0;
+      
+      cards.forEach(card => {
+        const ts = parseInt(card.dataset.timestamp);
+        let show = false;
+        
+        if (filterType === "all") {
+          show = true;
+        } else if (filterType === "favorites") {
+          const favs = JSON.parse(localStorage.getItem("countdown-favorites")) || [];
+          show = favs.includes(card.dataset.title);
+        } else if (!isNaN(ts)) {
+          const diff = ts - now;
+          if (filterType === "today") {
+            show = diff >= 0 && diff <= oneDay;
+          } else if (filterType === "week") {
+            show = diff >= 0 && diff <= oneWeek;
+          }
+        }
+        
+        card.style.display = show ? "block" : "none";
+        if (show) count++;
+      });
+      
+      // Update badge count
+      const badge = document.getElementById(isTV ? "tv-count" : "anime-count");
+      if (badge) badge.textContent = count + " shows";
+    });
+  });
+}
+
+document.addEventListener("DOMContentLoaded", setupFilters);
+
