@@ -7,11 +7,17 @@
   const searchInput = document.getElementById('search-input');
 
   function showShortcuts() {
-    if (modal) modal.hidden = false;
+    if (modal) {
+      modal.hidden = false;
+      modal.removeAttribute('hidden');
+    }
   }
 
   function hideShortcuts() {
-    if (modal) modal.hidden = true;
+    if (modal) {
+      modal.hidden = true;
+      modal.setAttribute('hidden', '');
+    }
   }
 
   // Global keyboard shortcuts
