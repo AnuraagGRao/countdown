@@ -996,10 +996,51 @@ async function init() {
 }
 
 // ─────────────────────────────────────────
+// Theme Switcher (Obsidian / Cyber / Arcade)
+// ─────────────────────────────────────────
+const THEMES = ['obsidian', 'cyber', 'arcade'];
+const THEME_ICONS = {
+  obsidian: '🖤',
+  cyber: '⚡',
+  arcade: '🕹️',
+};
+const THEME_NAMES = {
+  obsidian: 'Obsidian Precision',
+  cyber: 'Cyber Luminescence',
+  arcade: 'Neo-Arcade',
+};
+
+function setupThemeSwitcher() {
+  const themeBtn = document.getElementById('theme-btn');
+  const storedTheme = localStorage.getItem('user-theme') || 'obsidian';
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('user-theme', theme);
+    if (themeBtn) {
+      themeBtn.innerHTML = `<span>${THEME_ICONS[theme] || '🖤'}</span>`;
+      themeBtn.setAttribute('title', `Theme: ${THEME_NAMES[theme] || theme} (Click to switch)`);
+    }
+  }
+
+  applyTheme(storedTheme);
+
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'obsidian';
+      const nextIndex = (THEMES.indexOf(current) + 1) % THEMES.length;
+      const nextTheme = THEMES[nextIndex];
+      applyTheme(nextTheme);
+    });
+  }
+}
+
+// ─────────────────────────────────────────
 // DOM-Ready Entry Point
 // ─────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  setupThemeSwitcher();
   const searchForm = document.getElementById('search-form');
   const searchInput = document.getElementById('search-input');
   const searchResults = document.getElementById('search-results');
