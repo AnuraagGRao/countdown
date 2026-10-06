@@ -1,35 +1,27 @@
 /**
  * EpiCountdown – app.js
- * Fetches TV show & anime data, renders cards, and runs live countdown timers.
+ * High-performance, modern countdown tracker for TV shows & anime.
  *
  * APIs used:
- *   TVmaze  – https://api.tvmaze.com
- *   Jikan   – https://api.jikan.moe/v4
+ *   TVmaze  – https://api.tvmaze.com (Completely open, free TV metadata)
+ *   AniList – https://graphql.anilist.co (Modern, ultra-fast GraphQL anime schedule)
  */
 
 'use strict';
 
-// ─────────────────────────────────────────
-// Constants (imported from config)
-// ─────────────────────────────────────────
-const TVMAZE_SCHEDULE = 'https://api.tvmaze.com/schedule?country=US&date=';
-const TVMAZE_SEARCH = 'https://api.tvmaze.com/search/shows?q=';
-const TVMAZE_SHOW = 'https://api.tvmaze.com/shows/'; // + id + ?embed=nextepisode
-const JIKAN_SEASONS = 'https://api.jikan.moe/v4/seasons/now?limit=24';
-const JIKAN_SEARCH = 'https://api.jikan.moe/v4/anime?q=';
-
-const PLACEHOLDER_IMG =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='400' viewBox='0 0 300 400'%3E%3Crect width='300' height='400' fill='%230a0a12'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='64' fill='%23333'%3E📺%3C/text%3E%3C/svg%3E";
-
-const SHOWS_PER_SOURCE = 24;
-const SEARCH_DEBOUNCE_MS = 400;
-const COUNTDOWN_INTERVAL_MS = 1000;
+import {
+  API_ENDPOINTS,
+  CURATED_POPULAR_TV,
+  UI_CONFIG,
+  PLACEHOLDER_IMG,
+  CACHE_CONFIG,
+} from './config.js';
 
 // ─────────────────────────────────────────
 // State
 // ─────────────────────────────────────────
 /** @type {Array<{airTimestamp: number, cardEl: HTMLElement}>} */
-const activeCountdowns = [];
+let activeCountdowns = [];
 let countdownIntervalId = null;
 
 // ─────────────────────────────────────────
@@ -44,29 +36,91 @@ let countdownIntervalId = null;
 const pad = n => String(Math.max(0, Math.floor(n))).padStart(2, '0');
 
 /**
- * Parse a date/time string into a Unix timestamp (ms).
- * Returns NaN if the input is falsy.
- * @param {string|null} dateStr
- * @param {string|null} [timeStr]
- * @returns {number}
- */
-function parseAirTime(dateStr, timeStr) {
-  if (!dateStr) return NaN;
-  const combined = timeStr ? `${dateStr}T${timeStr}` : dateStr;
-  return new Date(combined).getTime();
-}
-
-/**
- * Sanitize a plain-text string to avoid XSS when inserting via textContent.
- * (We use textContent for all user-visible strings, so this is belt-and-suspenders.)
- * @param {string} str
+ * Sanitize a plain-text string.
+ * @param {*} str
  * @returns {string}
  */
 const safe = str => (str === null || str === undefined ? '' : String(str).trim());
 
+/**
+ * Save data with timestamp to localStorage.
+ */
+function setCache(key, data) {
+  try {
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        timestamp: Date.now(),
+        data,
+      })
+    );
+  } catch (e) {
+    console.warn('LocalStorage save failed:', e);
+  }
+}
+
+/**
+ * Retrieve cached data if within duration.
+ */
+function getCache(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { timestamp, data } = JSON.parse(raw);
+    if (Date.now() - timestamp < CACHE_CONFIG.CACHE_DURATION_MS) {
+      return data;
+    }
+  } catch (e) {
+    console.warn('LocalStorage read failed:', e);
+  }
+  return null;
+}
+
+/**
+ * Polite batch execution helper to avoid burst rate-limits / ECONNRESET.
+ */
+async function mapInBatches(items, batchSize, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const chunk = items.slice(i, i + batchSize);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
+    if (i + batchSize < items.length) {
+      await new Promise(r => setTimeout(r, 60));
+    }
+  }
+  return results;
+}
+
 // ─────────────────────────────────────────
-// Countdown engine
+// Countdown Engine
 // ─────────────────────────────────────────
+
+/**
+ * Return inner HTML for active countdown digits.
+ */
+function countdownTemplate() {
+  return `
+    <div class="countdown-unit">
+      <span class="countdown-value" data-days>00</span>
+      <span class="countdown-label">Days</span>
+    </div>
+    <div class="countdown-sep">:</div>
+    <div class="countdown-unit">
+      <span class="countdown-value" data-hours>00</span>
+      <span class="countdown-label">Hrs</span>
+    </div>
+    <div class="countdown-sep">:</div>
+    <div class="countdown-unit">
+      <span class="countdown-value" data-minutes>00</span>
+      <span class="countdown-label">Min</span>
+    </div>
+    <div class="countdown-sep">:</div>
+    <div class="countdown-unit">
+      <span class="countdown-value" data-seconds>00</span>
+      <span class="countdown-label">Sec</span>
+    </div>`;
+}
 
 /**
  * Write countdown values into a card element.
@@ -78,121 +132,86 @@ function renderCountdown(cardEl, airTimestamp) {
   if (!countdownEl) return;
 
   const now = Date.now();
+
+  if (isNaN(airTimestamp) || airTimestamp === null) {
+    countdownEl.className = 'card__countdown card__countdown--tba';
+    countdownEl.textContent = '⏳ Premiere TBA';
+    return;
+  }
+
   const diff = airTimestamp - now;
 
-  if (isNaN(airTimestamp)) {
-    setStaticLabel(countdownEl, 'tba', '⏳ TBA');
-    return;
-  }
-
   if (diff <= 0) {
-    setStaticLabel(countdownEl, 'completed', '✔ Aired');
+    countdownEl.className = 'card__countdown card__countdown--completed';
+    countdownEl.textContent = '✔ Episode Aired';
     return;
   }
 
-  const days = Math.floor(diff / 86_400_000);
-  const hours = Math.floor((diff % 86_400_000) / 3_600_000);
-  const minutes = Math.floor((diff % 3_600_000) / 60_000);
-  const seconds = Math.floor((diff % 60_000) / 1_000);
-
-  // Restore full countdown markup if it was previously replaced by a static label
+  // Restore units template if previously set to static label
   if (!countdownEl.querySelector('[data-seconds]')) {
-    countdownEl.innerHTML = countdownTemplate();
     countdownEl.className = 'card__countdown';
+    countdownEl.innerHTML = countdownTemplate();
   }
+
+  const days = Math.floor(diff / UI_CONFIG.MS_PER_DAY);
+  const hours = Math.floor((diff % UI_CONFIG.MS_PER_DAY) / UI_CONFIG.MS_PER_HOUR);
+  const minutes = Math.floor((diff % UI_CONFIG.MS_PER_HOUR) / UI_CONFIG.MS_PER_MINUTE);
+  const seconds = Math.floor((diff % UI_CONFIG.MS_PER_MINUTE) / UI_CONFIG.MS_PER_SECOND);
 
   // Add urgent class if less than 1 hour remaining
-  const isUrgent = diff < 3_600_000; // Less than 1 hour
+  const isUrgent = diff < UI_CONFIG.MS_PER_HOUR;
   countdownEl.classList.toggle('card__countdown--urgent', isUrgent);
 
-  countdownEl.querySelector('[data-days]').textContent = pad(days);
-  countdownEl.querySelector('[data-hours]').textContent = pad(hours);
-  countdownEl.querySelector('[data-minutes]').textContent = pad(minutes);
+  const daysEl = countdownEl.querySelector('[data-days]');
+  const hoursEl = countdownEl.querySelector('[data-hours]');
+  const minsEl = countdownEl.querySelector('[data-minutes]');
+  const secsEl = countdownEl.querySelector('[data-seconds]');
 
-  const secEl = countdownEl.querySelector('[data-seconds]');
-  secEl.textContent = pad(seconds);
-  secEl.classList.remove('tick-flash');
-  // Trigger reflow so the animation restarts
-  void secEl.offsetWidth;
-  secEl.classList.add('tick-flash');
+  if (daysEl) daysEl.textContent = pad(days);
+  if (hoursEl) hoursEl.textContent = pad(hours);
+  if (minsEl) minsEl.textContent = pad(minutes);
+
+  if (secsEl) {
+    const secVal = pad(seconds);
+    if (secsEl.textContent !== secVal) {
+      secsEl.textContent = secVal;
+      secsEl.classList.remove('tick-flash');
+      void secsEl.offsetWidth; // Reflow for animation restart
+      secsEl.classList.add('tick-flash');
+    }
+  }
 }
 
 /**
- * Replace countdown block with a single status label.
- * @param {HTMLElement} countdownEl
- * @param {'tba'|'completed'} type
- * @param {string} label
+ * Tick all active countdowns once per second.
  */
-function setStaticLabel(countdownEl, type, label) {
-  countdownEl.className = `card__countdown card__countdown--${type}`;
-  countdownEl.textContent = label;
-}
-
-/** Return the inner HTML for the countdown block (mirrors the <template>). */
-function countdownTemplate() {
-  return `
-    <div class="countdown-unit">
-      <span class="countdown-value" data-days></span>
-      <span class="countdown-label">Days</span>
-    </div>
-    <div class="countdown-sep">:</div>
-    <div class="countdown-unit">
-      <span class="countdown-value" data-hours></span>
-      <span class="countdown-label">Hrs</span>
-    </div>
-    <div class="countdown-sep">:</div>
-    <div class="countdown-unit">
-      <span class="countdown-value" data-minutes></span>
-      <span class="countdown-label">Min</span>
-    </div>
-    <div class="countdown-sep">:</div>
-    <div class="countdown-unit">
-      <span class="countdown-value" data-seconds></span>
-      <span class="countdown-label">Sec</span>
-    </div>`;
-}
-
-/** Tick all active countdowns once per second. */
 function startCountdownEngine() {
-  if (countdownIntervalId !== null) return; // Already running
+  if (countdownIntervalId !== null) return;
 
   countdownIntervalId = setInterval(() => {
-    // Clean up any countdowns for cards no longer in the DOM
-    for (let i = activeCountdowns.length - 1; i >= 0; i--) {
-      if (!document.contains(activeCountdowns[i].cardEl)) {
-        activeCountdowns.splice(i, 1);
-      }
-    }
+    // Retain only elements currently mounted in document
+    activeCountdowns = activeCountdowns.filter(item => document.body.contains(item.cardEl));
 
-    // Update remaining countdowns
-    for (const { airTimestamp, cardEl } of activeCountdowns) {
-      renderCountdown(cardEl, airTimestamp);
+    for (const item of activeCountdowns) {
+      renderCountdown(item.cardEl, item.airTimestamp);
     }
-  }, COUNTDOWN_INTERVAL_MS);
-}
-
-/** Stop the countdown engine and cleanup. */
-function stopCountdownEngine() {
-  if (countdownIntervalId !== null) {
-    clearInterval(countdownIntervalId);
-    countdownIntervalId = null;
-  }
-  activeCountdowns.length = 0;
+  }, UI_CONFIG.COUNTDOWN_INTERVAL_MS);
 }
 
 // ─────────────────────────────────────────
-// Card builder
+// Card Builder
 // ─────────────────────────────────────────
 
 /**
- * Build a card DOM element from a normalised show object and register
- * its countdown in the global registry.
+ * Build a card DOM element from a normalised show object.
  *
  * @param {{
+ *   id: string,
  *   title: string,
  *   image: string|null,
  *   status: string,
- *   rating: number|null,
+ *   rating: number|string|null,
+ *   network?: string,
  *   genres: string[],
  *   nextEpisodeLabel: string,
  *   airTimestamp: number,
@@ -204,18 +223,18 @@ function buildCard(show) {
   const template = document.getElementById('card-template');
   const card = template.content.cloneNode(true).querySelector('.card');
 
-  // Make card clickable
+  // External link
   if (show.url) {
     card.style.cursor = 'pointer';
-    card.addEventListener('click', (e) => {
-      // Don't trigger if favorite button was clicked
+    card.addEventListener('click', e => {
       if (e.target.closest('.card__favorite-btn')) return;
       window.open(show.url, '_blank', 'noopener,noreferrer');
     });
   }
 
-  // Add data attributes for filtering
-  card.dataset.timestamp = show.airTimestamp;
+  // Data attributes for filtering and countdown registration
+  card.dataset.id = safe(show.id);
+  card.dataset.timestamp = isNaN(show.airTimestamp) ? '' : String(show.airTimestamp);
   card.dataset.title = safe(show.title);
 
   // Favorites logic
@@ -225,27 +244,24 @@ function buildCard(show) {
     if (favorites.includes(safe(show.title))) {
       favBtn.classList.add('is-favorite');
     }
-    favBtn.addEventListener('click', (e) => {
+    favBtn.addEventListener('click', e => {
       e.stopPropagation();
       let favs = JSON.parse(localStorage.getItem('countdown-favorites')) || [];
       const title = safe(show.title);
       if (favs.includes(title)) {
         favs = favs.filter(t => t !== title);
         favBtn.classList.remove('is-favorite');
-        if (window.toast) window.toast.info('Removed from favorites');
+        if (window.toast) window.toast.info(`Removed "${title}" from favorites`);
       } else {
         favs.push(title);
         favBtn.classList.add('is-favorite');
-        if (window.toast) window.toast.success('Added to favorites!');
+        if (window.toast) window.toast.success(`Saved "${title}" to favorites!`);
       }
       localStorage.setItem('countdown-favorites', JSON.stringify(favs));
-      
-      // If we are currently filtering by favorites, we might want to re-filter,
-      // but hiding it immediately might be jarring.
     });
   }
 
-  // Image
+  // Poster Image
   const imgEl = card.querySelector('.card__image');
   imgEl.alt = safe(show.title);
   if (show.image) {
@@ -259,40 +275,41 @@ function buildCard(show) {
 
   // Status badge
   const badge = card.querySelector('.card__status-badge');
-  const statusLower = (show.status || '').toLowerCase();
-  if (statusLower.includes('air') || statusLower === 'running') {
-    badge.textContent = 'Airing';
-    badge.classList.add('badge--airing');
-  } else if (statusLower === 'ended' || statusLower === 'completed') {
-    badge.textContent = 'Ended';
-    badge.classList.add('badge--completed');
+  const hasFutureAir = !isNaN(show.airTimestamp) && show.airTimestamp > Date.now();
+  if (hasFutureAir) {
+    badge.textContent = 'Airing Soon';
+    badge.className = 'card__status-badge badge--airing';
+  } else if (show.status === 'Ended' || show.status === 'Completed') {
+    badge.textContent = 'Concluded';
+    badge.className = 'card__status-badge badge--completed';
   } else {
-    badge.textContent = show.status || 'TBA';
-    badge.classList.add('badge--tba');
+    badge.textContent = show.status === 'Running' || show.status === 'Releasing' ? 'In Season' : 'Upcoming';
+    badge.className = 'card__status-badge badge--tba';
   }
 
-  // Title
+  // Title & Episode Label
   card.querySelector('.card__title').textContent = safe(show.title);
-
-  // Episode label
   card.querySelector('.card__episode').textContent = safe(show.nextEpisodeLabel);
 
-  // Rating
+  // Rating & Network
   const ratingEl = card.querySelector('.card__rating');
-  if (show.rating !== null && show.rating !== undefined && show.rating > 0) {
-    ratingEl.textContent = `⭐ ${show.rating.toFixed(1)}`;
+  const ratingVal = show.rating ? Number(show.rating) : null;
+  if (ratingVal && ratingVal > 0) {
+    const formatted = ratingVal > 10 ? (ratingVal / 10).toFixed(1) : ratingVal.toFixed(1);
+    ratingEl.textContent = `⭐ ${formatted}`;
+  } else if (show.network) {
+    ratingEl.textContent = `📺 ${show.network}`;
   } else {
     ratingEl.textContent = '';
   }
 
   // Genres
   const genresEl = card.querySelector('.card__genres');
-  genresEl.textContent = show.genres.slice(0, 3).join(' · ') || '';
+  genresEl.textContent = (show.genres || []).slice(0, 3).join(' · ');
 
-  // Initial countdown render
+  // Countdown Render & Registration
   renderCountdown(card, show.airTimestamp);
 
-  // Register for live updates
   if (!isNaN(show.airTimestamp) && show.airTimestamp > Date.now()) {
     activeCountdowns.push({ airTimestamp: show.airTimestamp, cardEl: card });
   }
@@ -301,45 +318,17 @@ function buildCard(show) {
 }
 
 // ─────────────────────────────────────────
-// Render helpers
+// Render Helpers
 // ─────────────────────────────────────────
 
-/**
- * Replace grid contents with an error message.
- * @param {HTMLElement} grid
- * @param {string}      message
- */
 function showError(grid, message) {
   grid.innerHTML = `
     <div class="error-state">
-      <p>⚠️ Could not load data.</p>
+      <p>⚠️ Unable to load latest data.</p>
       <p class="error-detail">${safe(message)}</p>
     </div>`;
 }
 
-/**
- * Append cards to a grid and update the count badge.
- * @param {HTMLElement}   grid
- * @param {HTMLElement[]} cards
- * @param {HTMLElement}   badgeEl
- */
-function renderCards(grid, cards, badgeEl) {
-  grid.innerHTML = '';
-  if (cards.length === 0) {
-    grid.innerHTML = '<div class="error-state"><p>No results found.</p></div>';
-    return;
-  }
-  const fragment = document.createDocumentFragment();
-  for (const c of cards) fragment.appendChild(c);
-  grid.appendChild(fragment);
-  if (badgeEl) badgeEl.textContent = `${cards.length} shows`;
-}
-
-/**
- * Show skeleton loaders while content is loading.
- * @param {HTMLElement} grid
- * @param {number} count - Number of skeleton cards to show
- */
 function showSkeletons(grid, count = 6) {
   const skeletons = Array.from({ length: count }, () => {
     const skeleton = document.createElement('div');
@@ -361,191 +350,245 @@ function showSkeletons(grid, count = 6) {
   grid.appendChild(fragment);
 }
 
-// ─────────────────────────────────────────
-// TVmaze data fetching
-// ─────────────────────────────────────────
-
-/**
- * Fetch today's US TV schedule from TVmaze, deduplicate by show, enrich with
- * the next-episode embed, and return normalised show objects.
- *
- * Strategy:
- *  1. Fetch today's schedule (gives us ~100 episodes with show data inline).
- *  2. Deduplicate by show ID.
- *  3. For each unique show, fetch its /shows/:id?embed=nextepisode to get the
- *     precise next-episode timestamp (today's schedule only covers today, but
- *     a show's next episode may be later in the week).
- *  4. Limit to 24 shows for performance.
- */
-async function fetchTVShows() {
-  const today = new Date().toISOString().slice(0, 10);
-  const resp = await fetch(`${TVMAZE_SCHEDULE}${today}`);
-  if (!resp.ok) throw new Error(`TVmaze schedule: ${resp.status}`);
-
-  const episodes = await resp.json();
-
-  // Deduplicate by show ID, keep first occurrence
-  const showMap = new Map();
-  for (const ep of episodes) {
-    if (ep.show && !showMap.has(ep.show.id)) {
-      showMap.set(ep.show.id, ep.show);
-    }
+function renderCards(grid, cards, badgeEl) {
+  grid.innerHTML = '';
+  if (cards.length === 0) {
+    grid.innerHTML = '<div class="error-state"><p>No matching shows found.</p></div>';
+    if (badgeEl) badgeEl.textContent = '0 shows';
+    return;
   }
-
-  // Take up to 24 shows and enrich with nextepisode embed
-  const topShows = [...showMap.values()].slice(0, 24);
-
-  const enriched = await Promise.allSettled(
-    topShows.map(show =>
-      fetch(`${TVMAZE_SHOW}${show.id}?embed=nextepisode`).then(r =>
-        r.ok ? r.json() : Promise.reject(r.status)
-      )
-    )
-  );
-
-  return enriched
-    .map((result, i) => {
-      const raw = result.status === 'fulfilled' ? result.value : topShows[i];
-      const next = raw?._embedded?.nextepisode;
-      const show = raw || topShows[i];
-
-      const airDate = next?.airdate || null;
-      const airTime = next?.airtime || null;
-      const ts = parseAirTime(airDate, airTime);
-
-      return {
-        title: safe(show.name),
-        image: show.image?.medium || show.image?.original || null,
-        status: show.status || 'Unknown',
-        rating: show.rating?.average || null,
-        genres: show.genres || [],
-        nextEpisodeLabel: next
-          ? `Episode ${next.number ?? '?'}${next.season ? ` · S${String(next.season).padStart(2, '0')}` : ''}`
-          : show.status === 'Ended'
-            ? 'Series Ended'
-            : 'Next Episode TBA',
-        airTimestamp: ts,
-        url: show.url || `https://www.tvmaze.com/shows/${show.id}`,
-      };
-    })
-    .filter(s => s.title);
+  const fragment = document.createDocumentFragment();
+  for (const c of cards) fragment.appendChild(c);
+  grid.appendChild(fragment);
+  if (badgeEl) badgeEl.textContent = `${cards.length} shows`;
 }
 
 // ─────────────────────────────────────────
-// Jikan (MyAnimeList) data fetching
+// AniList GraphQL Fetching (Anime)
 // ─────────────────────────────────────────
 
 /**
- * Fetch currently-airing anime from Jikan's /seasons/now endpoint.
- * Returns normalised show objects. The Jikan API does not provide exact
- * per-episode air timestamps so we use the weekly broadcast day/time.
+ * Fetch top popular currently-releasing anime from AniList GraphQL.
  */
 async function fetchAnime() {
-  const resp = await fetch(JIKAN_SEASONS);
-  if (!resp.ok) throw new Error(`Jikan: ${resp.status}`);
-  const json = await resp.json();
+  const query = `
+    query {
+      Page(page: 1, perPage: ${UI_CONFIG.SHOWS_PER_SOURCE}) {
+        media(type: ANIME, status: RELEASING, sort: POPULARITY_DESC) {
+          id
+          title {
+            english
+            romaji
+          }
+          coverImage {
+            large
+            extraLarge
+          }
+          averageScore
+          genres
+          nextAiringEpisode {
+            airingAt
+            timeUntilAiring
+            episode
+          }
+          siteUrl
+        }
+      }
+    }
+  `;
 
-  return (json.data || [])
-    .filter(a => a.type !== 'Music' && a.type !== 'ONA') // skip music/specials
-    .slice(0, 24)
-    .map(anime => {
-      const broadcast = anime.broadcast; // { day, time, timezone, string }
-      const ts = nextBroadcastTimestamp(broadcast);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const score = anime.score ? Number(anime.score) : null;
+  try {
+    const resp = await fetch(API_ENDPOINTS.ANILIST_GRAPHQL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ query }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
 
-      return {
-        title: safe(anime.title_english || anime.title),
-        image: anime.images?.jpg?.large_image_url || anime.images?.jpg?.image_url || null,
-        status: anime.airing ? 'Airing' : anime.status || 'TBA',
-        rating: score,
-        genres: (anime.genres || []).map(g => g.name),
-        nextEpisodeLabel: anime.airing
-          ? anime.episodes
-            ? `Episode ? / ${anime.episodes}`
-            : 'Currently Airing'
-          : 'TBA',
-        airTimestamp: ts,
-        url: anime.url || `https://myanimelist.net/anime/${anime.mal_id}`,
-      };
-    })
-    .filter(s => s.title);
-}
+    if (!resp.ok) throw new Error(`AniList returned status ${resp.status}`);
+    const json = await resp.json();
+    const media = json.data?.Page?.media || [];
 
-/**
- * Given a Jikan broadcast object, compute the next timestamp (in ms) when
- * the anime airs, based on its weekly day and time (JST → UTC).
- *
- * @param {{ day?: string, time?: string, timezone?: string }|null} broadcast
- * @returns {number} ms timestamp, or NaN if unknown
- */
-function nextBroadcastTimestamp(broadcast) {
-  if (!broadcast || !broadcast.day || !broadcast.time) return NaN;
+    const items = media
+      .map(anime => {
+        const next = anime.nextAiringEpisode;
+        const airTimestamp = next ? next.airingAt * 1000 : NaN;
+        const title = anime.title.english || anime.title.romaji || 'Untitled Anime';
 
-  const days = [
-    'Sundays',
-    'Mondays',
-    'Tuesdays',
-    'Wednesdays',
-    'Thursdays',
-    'Fridays',
-    'Saturdays',
-  ];
-  const dayIndex = days.indexOf(broadcast.day);
-  if (dayIndex === -1) return NaN;
+        return {
+          id: `anime-${anime.id}`,
+          title: safe(title),
+          image: anime.coverImage?.extraLarge || anime.coverImage?.large || null,
+          status: next ? 'Airing' : 'Releasing',
+          rating: anime.averageScore ? anime.averageScore / 10 : null,
+          genres: anime.genres || [],
+          nextEpisodeLabel: next ? `Episode ${next.episode}` : 'Season in progress',
+          airTimestamp,
+          url: anime.siteUrl || `https://anilist.co/anime/${anime.id}`,
+        };
+      })
+      .filter(a => a.title);
 
-  // Parse time (HH:MM in JST = UTC+9)
-  const [hStr, mStr] = broadcast.time.split(':');
-  const hJST = parseInt(hStr, 10);
-  const mJST = parseInt(mStr, 10);
-  if (isNaN(hJST) || isNaN(mJST)) return NaN;
-
-  // Convert JST → UTC (handle negative hours)
-  let hUTC = hJST - 9;
-  let dayOffset = 0;
-
-  if (hUTC < 0) {
-    hUTC += 24;
-    dayOffset = -1;
-  } else if (hUTC >= 24) {
-    hUTC -= 24;
-    dayOffset = 1;
+    setCache(CACHE_CONFIG.ANIME_CACHE_KEY, items);
+    return items;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const cached = getCache(CACHE_CONFIG.ANIME_CACHE_KEY);
+    if (cached && cached.length > 0) return cached;
+    throw err;
   }
-
-  const now = new Date();
-  // Build a UTC date for the target day+time
-  const candidate = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hUTC, mJST, 0, 0)
-  );
-
-  // Adjust to the correct weekday
-  const todayUTCDay = candidate.getUTCDay();
-  let diff = dayIndex - todayUTCDay + dayOffset;
-
-  // Normalize diff to 0-6 range
-  if (diff < 0) diff += 7;
-
-  candidate.setUTCDate(candidate.getUTCDate() + diff);
-
-  // If the computed time is in the past, move forward one week
-  if (candidate.getTime() <= Date.now()) {
-    candidate.setUTCDate(candidate.getUTCDate() + 7);
-  }
-
-  return candidate.getTime();
 }
 
 // ─────────────────────────────────────────
-// Search
+// TVmaze Prestige Fetching (TV Shows)
+// ─────────────────────────────────────────
+
+/**
+ * Fetch top prestige & highly anticipated TV shows and upcoming airing schedule from TVmaze.
+ */
+async function fetchTVShows() {
+  const now = Date.now();
+  const cached = getCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY);
+
+  try {
+    const showsMap = new Map();
+
+    // 1. Fetch upcoming schedule for next 3 days to catch active prime time series
+    const dates = [];
+    for (let i = 0; i < 4; i++) {
+      const d = new Date(now + i * UI_CONFIG.MS_PER_DAY);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+
+    const schedulePromises = dates.map(date =>
+      Promise.allSettled([
+        fetch(`${API_ENDPOINTS.TVMAZE_SCHEDULE_WEB}${date}`).then(r => (r.ok ? r.json() : [])),
+        fetch(`${API_ENDPOINTS.TVMAZE_SCHEDULE}${date}`).then(r => (r.ok ? r.json() : [])),
+      ])
+    );
+
+    const scheduleResults = await Promise.allSettled(schedulePromises);
+    for (const dayRes of scheduleResults) {
+      if (dayRes.status !== 'fulfilled') continue;
+      const [webResult, usResult] = dayRes.value;
+      const allEps = [
+        ...(webResult.status === 'fulfilled' && Array.isArray(webResult.value) ? webResult.value : []),
+        ...(usResult.status === 'fulfilled' && Array.isArray(usResult.value) ? usResult.value : []),
+      ];
+
+      for (const ep of allEps) {
+        const s = ep._embedded?.show || ep.show;
+        if (!s) continue;
+        const weight = s.weight || 0;
+        const rating = s.rating?.average || 0;
+        const type = s.type;
+        const genres = s.genres || [];
+
+        // Filter out news, daytime talk, sports, court, reality, soap operas
+        if (type !== 'Scripted') continue;
+        if (genres.includes('Soap') || genres.includes('News') || genres.includes('Sports')) continue;
+
+        if (rating >= 7.8 && weight >= 95 && !showsMap.has(s.id)) {
+          const airTimestamp = ep.airstamp ? new Date(ep.airstamp).getTime() : NaN;
+          if (!isNaN(airTimestamp) && airTimestamp > now - 86400000) {
+            showsMap.set(s.id, {
+              id: `tv-${s.id}`,
+              title: safe(s.name),
+              image: s.image?.original || s.image?.medium || null,
+              status: s.status || 'Running',
+              rating: rating || null,
+              network: s.network?.name || s.webChannel?.name || null,
+              genres: s.genres || [],
+              nextEpisodeLabel: ep.name
+                ? `S${ep.season || 1}E${ep.number || '?'} · ${ep.name}`
+                : `Episode ${ep.number || '?'}`,
+              airTimestamp,
+              url: s.url || `https://www.tvmaze.com/shows/${s.id}`,
+              weight: s.weight || 80,
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Fetch curated premier hit series (Severance, Stranger Things, The Boys, House of the Dragon, Fallout, etc.)
+    const curatedResults = await mapInBatches(CURATED_POPULAR_TV, 6, async title => {
+      try {
+        const res = await fetch(
+          `${API_ENDPOINTS.TVMAZE_SINGLESINGLE}${encodeURIComponent(title)}&embed=nextepisode`
+        );
+        if (!res.ok) return null;
+        const s = await res.json();
+        const next = s._embedded?.nextepisode;
+        let airTimestamp = NaN;
+        let nextLabel = 'Upcoming Season TBA';
+
+        if (next) {
+          airTimestamp = next.airstamp ? new Date(next.airstamp).getTime() : NaN;
+          nextLabel = `Episode ${next.number || '1'} · S${String(next.season || '1').padStart(2, '0')}`;
+        } else if (s.status === 'Running') {
+          nextLabel = 'New Season in Production';
+        } else if (s.status === 'Ended') {
+          nextLabel = 'Complete Series';
+        }
+
+        return {
+          id: `tv-${s.id}`,
+          title: safe(s.name),
+          image: s.image?.original || s.image?.medium || null,
+          status: s.status || 'Running',
+          rating: s.rating?.average || null,
+          network: s.network?.name || s.webChannel?.name || null,
+          genres: s.genres || [],
+          nextEpisodeLabel: nextLabel,
+          airTimestamp,
+          url: s.url || `https://www.tvmaze.com/shows/${s.id}`,
+          weight: 100,
+        };
+      } catch {
+        return null;
+      }
+    });
+
+    const curatedList = curatedResults.filter(Boolean);
+    for (const c of curatedList) {
+      if (!showsMap.has(c.id)) {
+        showsMap.set(c.id, c);
+      }
+    }
+
+    // Sort: Shows with active countdowns first, then sorted by popularity/rating
+    const allShows = [...showsMap.values()].sort((a, b) => {
+      const aFuture = !isNaN(a.airTimestamp) && a.airTimestamp > now;
+      const bFuture = !isNaN(b.airTimestamp) && b.airTimestamp > now;
+      if (aFuture && bFuture) return a.airTimestamp - b.airTimestamp;
+      if (aFuture && !bFuture) return -1;
+      if (!aFuture && bFuture) return 1;
+      return (b.rating || 0) - (a.rating || 0);
+    });
+
+    const finalShows = allShows.slice(0, UI_CONFIG.SHOWS_PER_SOURCE);
+    setCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY, finalShows);
+    return finalShows;
+  } catch (err) {
+    if (cached && cached.length > 0) return cached;
+    throw err;
+  }
+}
+
+// ─────────────────────────────────────────
+// Unified Search (TVmaze + AniList)
 // ─────────────────────────────────────────
 
 let searchTimeout = null;
 
-/**
- * Search both TVmaze and Jikan simultaneously and render results in the
- * floating search results panel.
- * @param {string} query
- */
 async function performSearch(query) {
   const resultsEl = document.getElementById('search-results');
   if (!query.trim()) {
@@ -559,50 +602,61 @@ async function performSearch(query) {
       <div class="spinner"></div>
     </div>`;
 
+  const animeGql = `
+    query ($search: String) {
+      Page(page: 1, perPage: 6) {
+        media(search: $search, type: ANIME, sort: POPULARITY_DESC) {
+          id
+          title { english romaji }
+          coverImage { medium }
+          format
+          status
+          siteUrl
+        }
+      }
+    }
+  `;
+
   try {
     const [tvResp, animeResp] = await Promise.allSettled([
-      fetch(`${TVMAZE_SEARCH}${encodeURIComponent(query)}`).then(r => r.json()),
-      fetch(`${JIKAN_SEARCH}${encodeURIComponent(query)}&limit=5`).then(r => r.json()),
+      fetch(`${API_ENDPOINTS.TVMAZE_SEARCH}${encodeURIComponent(query)}`).then(r => r.json()),
+      fetch(API_ENDPOINTS.ANILIST_GRAPHQL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: animeGql, variables: { search: query } }),
+      }).then(r => r.json()),
     ]);
 
     const tvItems =
-      tvResp.status === 'fulfilled'
-        ? (tvResp.value || [])
-          .slice(0, 5)
-          .map(r => ({
+      tvResp.status === 'fulfilled' && Array.isArray(tvResp.value)
+        ? tvResp.value.slice(0, 5).map(r => ({
             title: r.show?.name,
             image: r.show?.image?.medium || null,
-            meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Unknown network'}`,
-            status: r.show?.status,
+            meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Prestige'}`,
             url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
           }))
-          .filter(i => i.title)
         : [];
 
     const animeItems =
-      animeResp.status === 'fulfilled'
-        ? (animeResp.value?.data || [])
-          .slice(0, 5)
-          .map(a => ({
-            title: a.title_english || a.title,
-            image: a.images?.jpg?.image_url || null,
-            meta: `Anime · ${a.type || 'TV'} · ${a.status || ''}`,
-            status: a.status,
-            url: a.url || `https://myanimelist.net/anime/${a.mal_id}`,
+      animeResp.status === 'fulfilled' && animeResp.value?.data?.Page?.media
+        ? animeResp.value.data.Page.media.map(a => ({
+            title: a.title.english || a.title.romaji,
+            image: a.coverImage?.medium || null,
+            meta: `Anime · ${a.format || 'Series'} · ${a.status || ''}`,
+            url: a.siteUrl || `https://anilist.co/anime/${a.id}`,
           }))
-          .filter(i => i.title)
         : [];
 
-    const combined = [...tvItems, ...animeItems];
+    const combined = [...tvItems, ...animeItems].filter(i => i.title);
 
     if (combined.length === 0) {
-      resultsEl.innerHTML = '<div class="search-no-results">No results found.</div>';
+      resultsEl.innerHTML = '<div class="search-no-results">No shows or anime found.</div>';
       return;
     }
 
     const header = document.createElement('div');
     header.className = 'search-results__header';
-    header.textContent = `${combined.length} result${combined.length !== 1 ? 's' : ''}`;
+    header.textContent = `${combined.length} results found`;
 
     const list = document.createDocumentFragment();
     list.appendChild(header);
@@ -612,24 +666,11 @@ async function performSearch(query) {
       row.className = 'search-result-item';
       row.setAttribute('role', 'button');
       row.setAttribute('tabindex', '0');
-      row.style.cursor = 'pointer';
 
-      // Add click handler to open show page
-      if (item.url) {
-        row.addEventListener('click', () => {
-          const resultsEl = document.getElementById('search-results');
-          window.open(item.url, '_blank', 'noopener,noreferrer');
-          resultsEl.hidden = true;
-        });
-        row.addEventListener('keydown', e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            const resultsEl = document.getElementById('search-results');
-            window.open(item.url, '_blank', 'noopener,noreferrer');
-            resultsEl.hidden = true;
-          }
-        });
-      }
+      row.addEventListener('click', () => {
+        window.open(item.url, '_blank', 'noopener,noreferrer');
+        resultsEl.hidden = true;
+      });
 
       const img = document.createElement('img');
       img.src = item.image || PLACEHOLDER_IMG;
@@ -665,7 +706,70 @@ async function performSearch(query) {
 }
 
 // ─────────────────────────────────────────
-// Initialise
+// Filter Setup
+// ─────────────────────────────────────────
+
+function setupFilters() {
+  const filterContainers = document.querySelectorAll('.filters-container');
+
+  filterContainers.forEach(container => {
+    const isTV = container.id.includes('tv');
+    const gridId = isTV ? 'tv-grid' : 'anime-grid';
+    const badgeId = isTV ? 'tv-count' : 'anime-count';
+
+    container.addEventListener('click', e => {
+      const chip = e.target.closest('.filter-chip');
+      if (!chip) return;
+
+      container.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+
+      const filterType = chip.dataset.filter;
+      const grid = document.getElementById(gridId);
+      if (!grid) return;
+
+      const cards = grid.querySelectorAll('.card');
+      const now = Date.now();
+      const oneDay = UI_CONFIG.MS_PER_DAY;
+      const oneWeek = oneDay * 7;
+      let visibleCount = 0;
+
+      cards.forEach(card => {
+        const ts = card.dataset.timestamp ? parseInt(card.dataset.timestamp, 10) : NaN;
+        let show = false;
+
+        if (filterType === 'all') {
+          show = true;
+        } else if (filterType === 'favorites') {
+          const favs = JSON.parse(localStorage.getItem('countdown-favorites')) || [];
+          show = favs.includes(card.dataset.title);
+        } else if (filterType === 'today') {
+          if (!isNaN(ts)) {
+            const diff = ts - now;
+            show = diff >= 0 && diff <= oneDay;
+          }
+        } else if (filterType === 'week') {
+          if (!isNaN(ts)) {
+            const diff = ts - now;
+            show = diff >= 0 && diff <= oneWeek;
+          }
+        } else if (filterType === 'upcoming') {
+          // Shows awaiting season dates or future airings
+          show = isNaN(ts) || ts > now;
+        }
+
+        card.style.display = show ? 'flex' : 'none';
+        if (show) visibleCount++;
+      });
+
+      const badge = document.getElementById(badgeId);
+      if (badge) badge.textContent = `${visibleCount} shows`;
+    });
+  });
+}
+
+// ─────────────────────────────────────────
+// Initialization
 // ─────────────────────────────────────────
 
 async function init() {
@@ -674,143 +778,80 @@ async function init() {
   const tvCount = document.getElementById('tv-count');
   const animeCount = document.getElementById('anime-count');
 
-  // Start countdown ticker
+  // Start the per-second countdown engine
   startCountdownEngine();
 
-  // Show skeleton loaders
-  showSkeletons(tvGrid, 6);
-  showSkeletons(animeGrid, 6);
+  // Instant render from cache if available (0ms visual pop)
+  const cachedTV = getCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY);
+  if (cachedTV && cachedTV.length > 0) {
+    renderCards(tvGrid, cachedTV.map(buildCard), tvCount);
+  } else {
+    showSkeletons(tvGrid, 6);
+  }
+
+  const cachedAnime = getCache(CACHE_CONFIG.ANIME_CACHE_KEY);
+  if (cachedAnime && cachedAnime.length > 0) {
+    renderCards(animeGrid, cachedAnime.map(buildCard), animeCount);
+  } else {
+    showSkeletons(animeGrid, 6);
+  }
 
   // Fetch TV shows and anime in parallel
   const [tvResult, animeResult] = await Promise.allSettled([fetchTVShows(), fetchAnime()]);
 
-  // Render TV shows
-  if (tvResult.status === 'fulfilled') {
-    const cards = tvResult.value.map(buildCard);
-    renderCards(tvGrid, cards, tvCount);
-    if (cards.length > 0 && window.toast) {
-      window.toast.success(`Loaded ${cards.length} TV shows!`, 2000);
-    }
-  } else {
-    console.error('TV fetch error:', tvResult.reason);
-    showError(tvGrid, tvResult.reason?.message || String(tvResult.reason));
-    tvCount.textContent = '0 shows';
-    if (window.toast) {
-      window.toast.error('Failed to load TV shows. Please refresh.', 4000);
-    }
+  // Render TV Shows
+  if (tvResult.status === 'fulfilled' && tvResult.value.length > 0) {
+    renderCards(tvGrid, tvResult.value.map(buildCard), tvCount);
+  } else if (!cachedTV || cachedTV.length === 0) {
+    showError(tvGrid, tvResult.reason?.message || 'Could not load TV shows.');
   }
 
-  // Render anime
-  if (animeResult.status === 'fulfilled') {
-    const cards = animeResult.value.map(buildCard);
-    renderCards(animeGrid, cards, animeCount);
-    if (cards.length > 0 && window.toast) {
-      window.toast.success(`Loaded ${cards.length} anime!`, 2000);
-    }
-  } else {
-    console.error('Anime fetch error:', animeResult.reason);
-    showError(animeGrid, animeResult.reason?.message || String(animeResult.reason));
-    animeCount.textContent = '0 shows';
-    if (window.toast) {
-      window.toast.error('Failed to load anime. Please refresh.', 4000);
-    }
+  // Render Anime
+  if (animeResult.status === 'fulfilled' && animeResult.value.length > 0) {
+    renderCards(animeGrid, animeResult.value.map(buildCard), animeCount);
+  } else if (!cachedAnime || cachedAnime.length === 0) {
+    showError(animeGrid, animeResult.reason?.message || 'Could not load anime.');
   }
 }
 
 // ─────────────────────────────────────────
-// DOM-ready entry point
+// DOM-Ready Entry Point
 // ─────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ── Search form ──
   const searchForm = document.getElementById('search-form');
   const searchInput = document.getElementById('search-input');
   const searchResults = document.getElementById('search-results');
 
-  searchForm.addEventListener('submit', e => {
-    e.preventDefault();
-    performSearch(searchInput.value);
-  });
+  if (searchForm && searchInput) {
+    searchForm.addEventListener('submit', e => {
+      e.preventDefault();
+      performSearch(searchInput.value);
+    });
 
-  // Live search with debounce
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimeout);
-    const q = searchInput.value.trim();
-    if (!q) {
-      searchResults.hidden = true;
-      return;
-    }
-    searchTimeout = setTimeout(() => performSearch(q), 400);
-  });
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      const q = searchInput.value.trim();
+      if (!q) {
+        if (searchResults) searchResults.hidden = true;
+        return;
+      }
+      searchTimeout = setTimeout(() => performSearch(q), UI_CONFIG.SEARCH_DEBOUNCE_MS);
+    });
 
-  // Close results when clicking outside
-  document.addEventListener('click', e => {
-    if (!searchForm.contains(e.target) && !searchResults.contains(e.target)) {
-      searchResults.hidden = true;
-    }
-  });
+    document.addEventListener('click', e => {
+      if (searchResults && !searchForm.contains(e.target) && !searchResults.contains(e.target)) {
+        searchResults.hidden = true;
+      }
+    });
 
-  // Close on Escape
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') searchResults.hidden = true;
-  });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && searchResults) {
+        searchResults.hidden = true;
+      }
+    });
+  }
 
-  // ── Boot ──
+  setupFilters();
   init().catch(err => console.error('Init error:', err));
 });
-
-// ── Filters ──
-function setupFilters() {
-  const filterContainers = document.querySelectorAll(".filters-container");
-  
-  filterContainers.forEach(container => {
-    const isTV = container.id.includes("tv");
-    const gridId = isTV ? "tv-grid" : "anime-grid";
-    
-    container.addEventListener("click", e => {
-      const chip = e.target.closest(".filter-chip");
-      if (!chip) return;
-      
-      // Update active state
-      container.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
-      chip.classList.add("active");
-      
-      const filterType = chip.dataset.filter;
-      const grid = document.getElementById(gridId);
-      const cards = grid.querySelectorAll(".card");
-      const now = Date.now();
-      const oneDay = 86400000;
-      const oneWeek = oneDay * 7;
-      let count = 0;
-      
-      cards.forEach(card => {
-        const ts = parseInt(card.dataset.timestamp);
-        let show = false;
-        
-        if (filterType === "all") {
-          show = true;
-        } else if (filterType === "favorites") {
-          const favs = JSON.parse(localStorage.getItem("countdown-favorites")) || [];
-          show = favs.includes(card.dataset.title);
-        } else if (!isNaN(ts)) {
-          const diff = ts - now;
-          if (filterType === "today") {
-            show = diff >= 0 && diff <= oneDay;
-          } else if (filterType === "week") {
-            show = diff >= 0 && diff <= oneWeek;
-          }
-        }
-        
-        card.style.display = show ? "block" : "none";
-        if (show) count++;
-      });
-      
-      // Update badge count
-      const badge = document.getElementById(isTV ? "tv-count" : "anime-count");
-      if (badge) badge.textContent = count + " shows";
-    });
-  });
-}
-
-document.addEventListener("DOMContentLoaded", setupFilters);
-

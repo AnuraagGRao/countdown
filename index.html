@@ -106,14 +106,14 @@
       <section id="tv-section" class="content-section">
         <div class="section-eyebrow">01 · TELEVISION</div>
         <div class="section-header">
-          <h2 class="section-title"><span class="section-accent">📺</span> Trending TV Shows</h2>
+          <h2 class="section-title"><span class="section-accent">📺</span> Popular &amp; Returning TV Shows</h2>
           <span class="section-badge" id="tv-count"></span>
         </div>
-        <div id="tv-filters" class="filters-container" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button class="filter-chip active" data-filter="all">All</button>
-            <button class="filter-chip" data-filter="today">Airing Today</button>
-            <button class="filter-chip" data-filter="week">This Week</button>
-            <button class="filter-chip" data-filter="favorites">Favorites</button>
+        <div id="tv-filters" class="filters-container">
+          <button class="filter-chip active" data-filter="all">All Shows</button>
+          <button class="filter-chip" data-filter="week">Airing This Week</button>
+          <button class="filter-chip" data-filter="upcoming">Upcoming Returns</button>
+          <button class="filter-chip" data-filter="favorites">Favorites</button>
         </div>
         <div id="tv-grid" class="cards-grid">
           <div class="loading-state">
@@ -127,14 +127,14 @@
       <section id="anime-section" class="content-section">
         <div class="section-eyebrow">02 · ANIME</div>
         <div class="section-header">
-          <h2 class="section-title"><span class="section-accent">🎌</span> Currently Airing Anime</h2>
+          <h2 class="section-title"><span class="section-accent">🎌</span> Top Releasing Anime</h2>
           <span class="section-badge" id="anime-count"></span>
         </div>
-        <div id="anime-filters" class="filters-container" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button class="filter-chip active" data-filter="all">All</button>
-            <button class="filter-chip" data-filter="today">Airing Today</button>
-            <button class="filter-chip" data-filter="week">This Week</button>
-            <button class="filter-chip" data-filter="favorites">Favorites</button>
+        <div id="anime-filters" class="filters-container">
+          <button class="filter-chip active" data-filter="all">All Airing</button>
+          <button class="filter-chip" data-filter="today">Airing Today</button>
+          <button class="filter-chip" data-filter="week">This Week</button>
+          <button class="filter-chip" data-filter="favorites">Favorites</button>
         </div>
         <div id="anime-grid" class="cards-grid">
           <div class="loading-state">
@@ -151,8 +151,7 @@
         Data sourced from
         <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>
         &amp;
-        <a href="https://jikan.moe" target="_blank" rel="noopener">Jikan (MyAnimeList)</a>. Built with ❤️ using Vanilla
-        JS.
+        <a href="https://anilist.co" target="_blank" rel="noopener">AniList</a>. Built with ❤️ using Vanilla JS.
       </p>
       <p style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.6;">Press <kbd>?</kbd> for keyboard shortcuts</p>
     </footer>
@@ -228,7 +227,7 @@
     </template>
 
     <script src="toast.js"></script>
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
     <script src="keyboard.js"></script>
   </body>
 </html>
