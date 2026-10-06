@@ -11,6 +11,7 @@
 
 import {
   API_ENDPOINTS,
+  TMDB_CONFIG,
   CURATED_POPULAR_TV,
   UI_CONFIG,
   PLACEHOLDER_IMG,
@@ -447,20 +448,178 @@ async function fetchAnime() {
 }
 
 // ─────────────────────────────────────────
-// TVmaze Prestige Fetching (TV Shows)
+// TMDB & TVmaze Ingestion (TV Shows)
 // ─────────────────────────────────────────
 
+function getTMDBAuth() {
+  const token = TMDB_CONFIG.API_READ_ACCESS_TOKEN;
+  const key = TMDB_CONFIG.API_KEY;
+  if (!token && !key) return null;
+  return {
+    headers: token
+      ? { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      : { Accept: 'application/json' },
+    queryParam: !token && key ? `api_key=${encodeURIComponent(key)}` : '',
+  };
+}
+
+function buildTMDBUrl(auth, path, extraParams = '') {
+  let url = `${API_ENDPOINTS.TMDB_BASE}${path}`;
+  const params = [];
+  if (auth?.queryParam) params.push(auth.queryParam);
+  if (extraParams) params.push(extraParams);
+  if (params.length > 0) {
+    url += (url.includes('?') ? '&' : '?') + params.join('&');
+  }
+  return url;
+}
+
 /**
- * Fetch top prestige & highly anticipated TV shows and upcoming airing schedule from TVmaze.
+ * Fetch top prestige & highly anticipated TV shows from TMDB.
  */
-async function fetchTVShows() {
+async function fetchTMDBShows(auth) {
+  const now = Date.now();
+  const cached = getCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY);
+
+  const buildUrl = (path, extraParams = '') => buildTMDBUrl(auth, path, extraParams);
+
+  try {
+    const showIds = new Set();
+
+    // 1. Fetch shows currently on the air / upcoming this week
+    const onAirPromise = fetch(buildUrl('/tv/on_the_air', 'timezone=America%2FNew_York'), { headers: auth.headers })
+      .then(r => (r.ok ? r.json() : { results: [] }))
+      .catch(() => ({ results: [] }));
+
+    // 2. Fetch trending TV shows globally
+    const trendingPromise = fetch(buildUrl('/trending/tv/week'), { headers: auth.headers })
+      .then(r => (r.ok ? r.json() : { results: [] }))
+      .catch(() => ({ results: [] }));
+
+    // 3. Search curated prestige list in batches
+    const curatedPromises = mapInBatches(CURATED_POPULAR_TV, 6, async title => {
+      try {
+        const res = await fetch(buildUrl('/search/tv', `query=${encodeURIComponent(title)}`), { headers: auth.headers });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.results?.[0]?.id || null;
+      } catch {
+        return null;
+      }
+    });
+
+    const [onAirData, trendingData, curatedIds] = await Promise.all([
+      onAirPromise,
+      trendingPromise,
+      curatedPromises,
+    ]);
+
+    for (const s of onAirData.results || []) {
+      if (s.id) showIds.add(s.id);
+    }
+    for (const s of trendingData.results || []) {
+      if (s.id) showIds.add(s.id);
+    }
+    for (const id of curatedIds || []) {
+      if (id) showIds.add(id);
+    }
+
+    const uniqueIds = Array.from(showIds).slice(0, 36);
+
+    // Fetch detailed metadata including next_episode_to_air for each show
+    const detailedShows = await mapInBatches(uniqueIds, 6, async id => {
+      try {
+        const res = await fetch(buildUrl(`/tv/${id}`), { headers: auth.headers });
+        if (!res.ok) return null;
+        const d = await res.json();
+        if (!d.name) return null;
+
+        const genres = (d.genres || []).map(g => g.name);
+        const type = d.type || 'Scripted';
+
+        // Filter out news, daytime talk, sports, reality, soap operas
+        if (
+          type === 'Talk Show' ||
+          type === 'Reality' ||
+          genres.includes('Talk') ||
+          genres.includes('News') ||
+          genres.includes('Reality') ||
+          genres.includes('Soap')
+        ) {
+          return null;
+        }
+
+        const next = d.next_episode_to_air;
+        let airTimestamp = NaN;
+        let nextLabel = 'Upcoming Season TBA';
+
+        if (next && next.air_date) {
+          airTimestamp = new Date(`${next.air_date}T20:00:00Z`).getTime();
+          nextLabel = next.name
+            ? `S${next.season_number}E${next.episode_number} · ${next.name}`
+            : `Season ${next.season_number} · Episode ${next.episode_number}`;
+        } else if (d.status === 'Returning Series' || d.status === 'In Production') {
+          nextLabel = 'New Season in Production';
+        } else if (d.status === 'Ended') {
+          nextLabel = 'Complete Series';
+        } else if (d.status === 'Planned') {
+          nextLabel = 'In Development';
+        }
+
+        return {
+          id: `tmdb-${d.id}`,
+          title: safe(d.name),
+          image: d.poster_path ? `${API_ENDPOINTS.TMDB_IMAGE}${d.poster_path}` : null,
+          status: d.status || 'Running',
+          rating: d.vote_average ? Number(d.vote_average.toFixed(1)) : null,
+          network: d.networks?.[0]?.name || null,
+          genres,
+          nextEpisodeLabel: nextLabel,
+          airTimestamp,
+          url: `https://www.themoviedb.org/tv/${d.id}`,
+          weight: d.popularity || 80,
+        };
+      } catch {
+        return null;
+      }
+    });
+
+    const validShows = detailedShows.filter(Boolean);
+
+    // Sort: active upcoming countdowns first, then sorted by popularity/rating
+    validShows.sort((a, b) => {
+      const aFuture = !isNaN(a.airTimestamp) && a.airTimestamp > now;
+      const bFuture = !isNaN(b.airTimestamp) && b.airTimestamp > now;
+      if (aFuture && bFuture) return a.airTimestamp - b.airTimestamp;
+      if (aFuture && !bFuture) return -1;
+      if (!aFuture && bFuture) return 1;
+      return (b.weight || 0) - (a.weight || 0);
+    });
+
+    const finalShows = validShows.slice(0, UI_CONFIG.SHOWS_PER_SOURCE);
+    if (finalShows.length > 0) {
+      setCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY, finalShows);
+      return finalShows;
+    }
+
+    return fetchTVmazeShows();
+  } catch (err) {
+    console.warn('TMDB fetch failed, falling back to TVmaze:', err);
+    if (cached && cached.length > 0) return cached;
+    return fetchTVmazeShows();
+  }
+}
+
+/**
+ * Fallback: Fetch top prestige TV shows from TVmaze.
+ */
+async function fetchTVmazeShows() {
   const now = Date.now();
   const cached = getCache(CACHE_CONFIG.TV_SHOWS_CACHE_KEY);
 
   try {
     const showsMap = new Map();
 
-    // 1. Fetch upcoming schedule for next 3 days to catch active prime time series
     const dates = [];
     for (let i = 0; i < 4; i++) {
       const d = new Date(now + i * UI_CONFIG.MS_PER_DAY);
@@ -491,7 +650,6 @@ async function fetchTVShows() {
         const type = s.type;
         const genres = s.genres || [];
 
-        // Filter out news, daytime talk, sports, court, reality, soap operas
         if (type !== 'Scripted') continue;
         if (genres.includes('Soap') || genres.includes('News') || genres.includes('Sports')) continue;
 
@@ -518,7 +676,6 @@ async function fetchTVShows() {
       }
     }
 
-    // 2. Fetch curated premier hit series (Severance, Stranger Things, The Boys, House of the Dragon, Fallout, etc.)
     const curatedResults = await mapInBatches(CURATED_POPULAR_TV, 6, async title => {
       try {
         const res = await fetch(
@@ -564,7 +721,6 @@ async function fetchTVShows() {
       }
     }
 
-    // Sort: Shows with active countdowns first, then sorted by popularity/rating
     const allShows = [...showsMap.values()].sort((a, b) => {
       const aFuture = !isNaN(a.airTimestamp) && a.airTimestamp > now;
       const bFuture = !isNaN(b.airTimestamp) && b.airTimestamp > now;
@@ -581,6 +737,17 @@ async function fetchTVShows() {
     if (cached && cached.length > 0) return cached;
     throw err;
   }
+}
+
+/**
+ * Master fetch for TV Shows — uses TMDB if API key/token present, falls back to TVmaze.
+ */
+async function fetchTVShows() {
+  const auth = getTMDBAuth();
+  if (auth) {
+    return fetchTMDBShows(auth);
+  }
+  return fetchTVmazeShows();
 }
 
 // ─────────────────────────────────────────
@@ -618,35 +785,49 @@ async function performSearch(query) {
   `;
 
   try {
-    const [tvResp, animeResp] = await Promise.allSettled([
-      fetch(`${API_ENDPOINTS.TVMAZE_SEARCH}${encodeURIComponent(query)}`).then(r => r.json()),
-      fetch(API_ENDPOINTS.ANILIST_GRAPHQL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: animeGql, variables: { search: query } }),
-      }).then(r => r.json()),
-    ]);
+    const auth = getTMDBAuth();
 
-    const tvItems =
-      tvResp.status === 'fulfilled' && Array.isArray(tvResp.value)
-        ? tvResp.value.slice(0, 5).map(r => ({
-            title: r.show?.name,
-            image: r.show?.image?.medium || null,
-            meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Prestige'}`,
-            url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
-          }))
-        : [];
+    const tvPromise = auth
+      ? fetch(buildTMDBUrl(auth, '/search/tv', `query=${encodeURIComponent(query)}`), { headers: auth.headers })
+          .then(r => (r.ok ? r.json() : { results: [] }))
+          .then(data =>
+            (data.results || []).slice(0, 5).map(r => ({
+              title: r.name,
+              image: r.poster_path ? `${API_ENDPOINTS.TMDB_IMAGE}${r.poster_path}` : null,
+              meta: `TV · ${r.first_air_date ? r.first_air_date.slice(0, 4) : 'Series'}${r.vote_average ? ` · ★ ${r.vote_average.toFixed(1)}` : ''}`,
+              url: `https://www.themoviedb.org/tv/${r.id}`,
+            }))
+          )
+          .catch(() => [])
+      : fetch(`${API_ENDPOINTS.TVMAZE_SEARCH}${encodeURIComponent(query)}`)
+          .then(r => (r.ok ? r.json() : []))
+          .then(data =>
+            (Array.isArray(data) ? data : []).slice(0, 5).map(r => ({
+              title: r.show?.name,
+              image: r.show?.image?.medium || null,
+              meta: `TV · ${r.show?.network?.name || r.show?.webChannel?.name || 'Prestige'}`,
+              url: r.show?.url || `https://www.tvmaze.com/shows/${r.show?.id}`,
+            }))
+          )
+          .catch(() => []);
 
-    const animeItems =
-      animeResp.status === 'fulfilled' && animeResp.value?.data?.Page?.media
-        ? animeResp.value.data.Page.media.map(a => ({
-            title: a.title.english || a.title.romaji,
-            image: a.coverImage?.medium || null,
-            meta: `Anime · ${a.format || 'Series'} · ${a.status || ''}`,
-            url: a.siteUrl || `https://anilist.co/anime/${a.id}`,
-          }))
-        : [];
+    const animePromise = fetch(API_ENDPOINTS.ANILIST_GRAPHQL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: animeGql, variables: { search: query } }),
+    })
+      .then(r => (r.ok ? r.json() : {}))
+      .then(animeResp =>
+        (animeResp?.data?.Page?.media || []).map(a => ({
+          title: a.title.english || a.title.romaji,
+          image: a.coverImage?.medium || null,
+          meta: `Anime · ${a.format || 'Series'} · ${a.status || ''}`,
+          url: a.siteUrl || `https://anilist.co/anime/${a.id}`,
+        }))
+      )
+      .catch(() => []);
 
+    const [tvItems, animeItems] = await Promise.all([tvPromise, animePromise]);
     const combined = [...tvItems, ...animeItems].filter(i => i.title);
 
     if (combined.length === 0) {

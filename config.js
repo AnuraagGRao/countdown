@@ -3,14 +3,39 @@
  */
 
 export const API_ENDPOINTS = {
+  // TMDB v3 API for premier global movies & TV metadata
+  TMDB_BASE: 'https://api.themoviedb.org/3',
+  TMDB_IMAGE: 'https://image.tmdb.org/t/p/w500',
   // AniList GraphQL API for 100% reliable real-time anime countdowns
   ANILIST_GRAPHQL: 'https://graphql.anilist.co',
-  // TVmaze APIs for TV data (completely free, open-source, no key required)
+  // TVmaze APIs for TV data (completely free, open-source fallback)
   TVMAZE_SINGLESINGLE: 'https://api.tvmaze.com/singlesearch/shows?q=',
   TVMAZE_SCHEDULE: 'https://api.tvmaze.com/schedule?country=US&date=',
   TVMAZE_SCHEDULE_WEB: 'https://api.tvmaze.com/schedule/web?date=',
   TVMAZE_SEARCH: 'https://api.tvmaze.com/search/shows?q=',
   TVMAZE_SHOW: 'https://api.tvmaze.com/shows/',
+};
+
+// ── The Movie Database (TMDB) Configuration ──────────────────────────────
+let secrets = { API_KEY: '', API_READ_ACCESS_TOKEN: '' };
+try {
+  const mod = await import('./secrets.js');
+  if (mod?.TMDB_SECRETS) {
+    secrets = mod.TMDB_SECRETS;
+  }
+} catch {
+  // secrets.js not present (e.g. fresh clone), fallback gracefully
+}
+
+// Optional localStorage fallback
+const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('epicountdown_tmdb_key') : null;
+const storedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('epicountdown_tmdb_token') : null;
+
+export const TMDB_CONFIG = {
+  API_KEY: secrets.API_KEY || storedKey || '',
+  API_READ_ACCESS_TOKEN: secrets.API_READ_ACCESS_TOKEN || storedToken || '',
+  BASE_URL: 'https://api.themoviedb.org/3',
+  IMAGE_BASE_URL: 'https://image.tmdb.org/t/p/w500',
 };
 
 // Curated list of premier, universally acclaimed and highly anticipated TV shows

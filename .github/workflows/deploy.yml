@@ -29,6 +29,19 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
+      - name: Inject TMDB Secrets
+        env:
+          TMDB_API_READ_ACCESS_TOKEN: ${{ secrets.TMDB_API_READ_ACCESS_TOKEN || secrets.API_READ_ACCESS_TOKEN }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY || secrets.API_KEY }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const token = process.env.TMDB_API_READ_ACCESS_TOKEN || '';
+            const key = process.env.TMDB_API_KEY || '';
+            const content = 'export const TMDB_SECRETS = ' + JSON.stringify({ API_KEY: key, API_READ_ACCESS_TOKEN: token }, null, 2) + ';\n';
+            fs.writeFileSync('secrets.js', content, 'utf8');
+          "
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
